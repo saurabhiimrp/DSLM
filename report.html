@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Worker Performance Dashboard</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    .chart-container {
+      margin: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Worker Performance Dashboard</h1>
+  <input type="file" id="fileInput" accept="application/json">
+
+  <div id="charts">
+    <div class="chart-container" id="timeTrend"></div>
+    <div class="chart-container" id="geoMap"></div>
+    <div class="chart-container" id="workerSummary"></div>
+    <div class="chart-container" id="hourlyFailures"></div>
+    <div class="chart-container" id="pincodeSummary"></div>
+  </div>
+
+  <script>
+    document.getElementById('fileInput').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          generateDashboard(data);
+        } catch (err) {
+          alert('Invalid JSON file');
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    function generateDashboard(dataArray) {
+      if (!Array.isArray(dataArray)) dataArray = [dataArray];
+
+      const parseTime = str => new Date(str);
+
+      // Prepare structures
+      const hourlyTrend = {}, hourlyFailures = Array(24).fill(0);
+      const workerStats = {}, geoData = [], pincodeStats = {};
+
+      dataArray.forEach(entry => {
+        const time = parseTime(entry.completion_time);
+        const hour = time.getHours();
+        const worker = entry.worker_name;
+        const status = entry.status;
+        const pincode = entry.address_pincode;
+
+        // Time trend
+        const key = time.toISOString().slice(0, 13);
+        hourlyTrend[key] = hourlyTrend[key] || { success: 0, failed: 0 };
+        hourlyTrend[key][status === 'Failed' ? 'failed' : 'success']++;
+
+        // Hourly failure
+        if (status === 'Failed') hourlyFailures[hour]++;
+
+        // Worker stats
+        if (!workerStats[worker]) workerStats[worker] = { success: 0, failed: 0 };
+        workerStats[worker][status === 'Failed' ? 'failed' : 'success']++;
+
+        // Geolocation
+        geoData.push({
+          lat: entry.completion_lat,
+          lon: entry.completion_lng,
+          status,
+          text: `${worker} - ${status}`
+        });
+
+        // Pincode
+        if (!pincodeStats[pincode]) pincodeStats[pincode] = { success: 0, failed: 0 };
+        pincodeStats[pincode][status === 'Failed' ? 'failed' : 'success']++;
+      });
+
+      // 1. Time Trend
+      const timeKeys = Object.keys(hourlyTrend).sort();
+      Plotly.newPlot('timeTrend', [
+        {
+          x: timeKeys,
+          y: timeKeys.map(k => hourlyTrend[k].success),
+          name: 'Success',
+          type: 'bar'
+        },
+        {
+          x: timeKeys,
+          y: timeKeys.map(k => hourlyTrend[k].failed),
+          name: 'Failed',
+          type: 'bar'
+        }
+      ], );
+
+      // 2. Geo Map
+      Plotly.newPlot('geoMap', [{
+        type: 'scattermapbox',
+        lat: geoData.map(d => d.lat),
+        lon: geoData.map(d => d.lon),
+        text: geoData.map(d => d.text),
+        mode: 'markers',
+        marker: { color: geoData.map(d => d.status === 'Success' ? 'red' : 'green'), size: 8 }
+      }], {
+        title: 'Geospatial Failure Map',
+        mapbox: {
+          style: 'open-street-map',
+          center: { lat: geoData[0]?.lat || 0, lon: geoData[0]?.lon || 0 },
+          zoom: 10
+        },
+        margin: { t: 40, b: 0 },
+      });
+
+      // 3. Worker Summary
+      const workers = Object.keys(workerStats);
+      Plotly.newPlot('workerSummary', [{
+        x: workers,
+        y: workers.map(w => workerStats[w].success),
+        name: 'Success',
+        type: 'bar'
+      }, {
+        x: workers,
+        y: workers.map(w => workerStats[w].failed),
+        name: 'Failed',
+        type: 'bar'
+      }], { barmode: 'stack', title: 'Worker Performance Summary' });
+
+      // 4. Hourly Failure Trend
+      Plotly.newPlot('hourlyFailures', [{
+        x: Array.from({ length: 24 }, (_, i) => i),
+        y: hourlyFailures,
+        type: 'bar',
+        name: 'Failures'
+      }], { title: 'Failure Count by Hour' });
+
+      // 5. Pincode Summary
+      const pincodes = Object.keys(pincodeStats);
+      Plotly.newPlot('pincodeSummary', [{
+        x: pincodes,
+        y: pincodes.map(p => pincodeStats[p].failed),
+        name: 'Failed',
+        type: 'bar',
+        marker: { color: 'orange' }
+      }, {
+        x: pincodes,
+        y: pincodes.map(p => pincodeStats[p].success),
+        name: 'Success',
+        type: 'bar',
+        marker: { color: 'green' }
+      }], { barmode: 'stack', title: 'Pincode-wise Performance' });
+    }
+  </script>
+</body>
+</html>
